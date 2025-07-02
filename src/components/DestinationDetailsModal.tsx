@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Calendar, Globe, MapPin, Clock, PlaneLanding, DollarSign, Utensils, Languages, Building2, RefreshCw } from 'lucide-react';
 import { Destination, Hotel } from '../types';
-import { fetchHotelRecommendations } from '../services/api';
+import { fetchHybridHotels } from '../services/api';
 
 interface Props {
   destination: Destination;
@@ -24,7 +24,7 @@ export default function DestinationDetailsModal({ destination, onClose, isOpen }
     setLoadingHotels(true);
     setHotelError(null);
     try {
-      const recommendations = await fetchHotelRecommendations(destination.name, destination.region);
+      const recommendations = await fetchHybridHotels(destination.name, destination.region);
       setHotels(recommendations);
     } catch (error) {
       setHotelError('Unable to load hotel recommendations');
@@ -184,11 +184,20 @@ export default function DestinationDetailsModal({ destination, onClose, isOpen }
                         </div>
                       </div>
                       
-                      {/* Haiku Display */}
-                      <div className="mt-3 p-3 bg-indigo-50 rounded-lg">
-                        <p className="text-indigo-700 italic text-center whitespace-pre-line font-medium">
-                          {hotel.haiku.split('\n').join('\n')}
-                        </p>
+                      {/* Image + Haiku */}
+                      <div className="mt-3 flex gap-4 items-start">
+                        {hotel.image && (
+                          <img
+                            src={hotel.image}
+                            alt={hotel.name}
+                            className="w-32 h-24 object-cover rounded-lg flex-shrink-0"
+                          />
+                        )}
+                        <div className="p-3 bg-indigo-50 rounded-lg flex-1">
+                          <p className="text-indigo-700 italic whitespace-pre-line font-medium text-center md:text-left">
+                            {hotel.haiku.split('\n').join('\n')}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   ))}

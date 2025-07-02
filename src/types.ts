@@ -27,6 +27,7 @@ export interface Hotel {
   rating?: string;
   priceRange?: string;
   haiku: string; // A creative haiku explaining why this hotel was recommended
+  image?: string; // Hotel image URL
 }
 
 export interface Destination {

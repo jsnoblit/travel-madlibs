@@ -12,6 +12,11 @@ const openai = new OpenAI({
   dangerouslyAllowBrowser: true
 });
 
+// Xotelo (RapidAPI) integration constants
+const XOTELO_API_KEY = import.meta.env.VITE_XOTELO_API_KEY;
+const XOTELO_API_HOST = import.meta.env.VITE_XOTELO_API_HOST;
+const XOTELO_BASE_URL = XOTELO_API_HOST ? `https://${XOTELO_API_HOST}/api` : undefined;
+
 export async function generateTravelRecommendations(query: TravelQuery): Promise<ApiResponse> {
   try {
     if (!OPENAI_API_KEY) {
@@ -191,4 +196,158 @@ Example response format:
     console.error('Error fetching hotel recommendations:', error);
     throw new Error('Failed to fetch hotel recommendations');
   }
+}
+
+/**
+ * Fetch real hotel data for a destination using Xotelo's RapidAPI endpoints.
+ * 1. Perform a geo search to obtain a location_key for the destination city/region.
+ * 2. Retrieve a limited list of hotels for that location.
+ * 3. Map the data into the existing `Hotel` interface.
+ * 4. Optionally enrich each hotel with a haiku generated via OpenAI.
+ */
+export async function fetchRealHotels(destination: string, limit: number = 3): Promise<Hotel[]> {
+  // Validate environment variables first
+  if (!XOTELO_API_KEY || !XOTELO_API_HOST || !XOTELO_BASE_URL) {
+    console.error('Xotelo API credentials are not configured. Please set VITE_XOTELO_API_KEY and VITE_XOTELO_API_HOST in your .env file.');
+    return [];
+  }
+
+  const headers = {
+    'X-RapidAPI-Key': XOTELO_API_KEY,
+    'X-RapidAPI-Host': XOTELO_API_HOST
+  } as Record<string, string>;
+
+  try {
+    // 1. Search for the destination to get a location_key
+    const searchUrl = `${XOTELO_BASE_URL}/search?query=${encodeURIComponent(destination)}&location_type=geo`;
+    const searchRes = await fetch(searchUrl, { headers });
+    const searchJson = await searchRes.json();
+    const locationKey: string | undefined = searchJson?.result?.list?.[0]?.location_key;
+
+    if (!locationKey) {
+      console.warn(`No location_key found for destination "${destination}"`);
+      return [];
+    }
+
+    // 2. Fetch hotel list
+    const listUrl = `${XOTELO_BASE_URL}/list?location_key=${locationKey}&limit=${limit}`;
+    const listRes = await fetch(listUrl, { headers });
+    const listJson = await listRes.json();
+    const hotelsRaw = listJson?.result?.list ?? [];
+
+    // 3. Map to Hotel interface
+    const hotels: Hotel[] = hotelsRaw.map((h: any) => ({
+      name: h.name,
+      address: h.street_address || h.place_name || '',
+      rating: h.review_summary?.rating ? `${h.review_summary.rating}-star` : undefined,
+      priceRange: h.price_ranges ? `$${h.price_ranges.minimum}-$${h.price_ranges.maximum}` : undefined,
+      haiku: '' // will be filled below
+    }));
+
+    // 4. Add haiku descriptions via OpenAI (best-effort, no-fail)
+    for (const hotel of hotels) {
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: 'Write a 3-line haiku about the hotel.' },
+            { role: 'user', content: `Hotel: ${hotel.name}. Address: ${hotel.address}` }
+          ],
+          temperature: 0.7
+        });
+        hotel.haiku = completion.choices[0]?.message?.content?.trim() || '';
+      } catch (haikuErr) {
+        console.warn('Failed to generate haiku for hotel', hotel.name, haikuErr);
+        hotel.haiku = '';
+      }
+    }
+
+    return hotels;
+  } catch (err) {
+    console.error('Error fetching real hotels:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetch hotels recommended by OpenAI, then augment with Xotelo factual data.
+ * Any GPT-suggested hotel that cannot be matched to a Xotelo listing is skipped.
+ */
+export async function fetchHybridHotels(destination: string, region: string, gptLimit: number = 5): Promise<Hotel[]> {
+  // Step 1: Get GPT hotel suggestions (names + haiku)
+  let gptHotels: Hotel[] = [];
+  try {
+    gptHotels = await fetchHotelRecommendations(destination, region);
+  } catch (err) {
+    console.error('GPT hotel recommendation failed', err);
+    return [];
+  }
+  if (gptHotels.length === 0) return [];
+
+  // Step 2: Pull Xotelo list for the destination
+  if (!XOTELO_API_KEY || !XOTELO_API_HOST || !XOTELO_BASE_URL) {
+    console.warn('Xotelo credentials missing – returning GPT-only hotels without factual data');
+    return [];
+  }
+
+  const headers = {
+    'X-RapidAPI-Key': XOTELO_API_KEY,
+    'X-RapidAPI-Host': XOTELO_API_HOST
+  } as Record<string, string>;
+
+  // Get location_key
+  let locationKey: string | undefined;
+  try {
+    const searchUrl = `${XOTELO_BASE_URL}/search?query=${encodeURIComponent(destination)}&location_type=geo`;
+    const locRes = await fetch(searchUrl, { headers });
+    const locJson = await locRes.json();
+    locationKey = locJson?.result?.list?.[0]?.location_key;
+  } catch (err) {
+    console.error('Xotelo location search failed', err);
+  }
+  if (!locationKey) {
+    console.warn('No Xotelo location_key found; cannot augment GPT hotels');
+    return [];
+  }
+
+  // Fetch Xotelo hotel list (higher limit for matching)
+  let xoteloList: any[] = [];
+  try {
+    const listUrl = `${XOTELO_BASE_URL}/list?location_key=${locationKey}&limit=50`;
+    const listRes = await fetch(listUrl, { headers });
+    const listJson = await listRes.json();
+    xoteloList = listJson?.result?.list ?? [];
+  } catch (err) {
+    console.error('Xotelo list fetch failed', err);
+  }
+  if (xoteloList.length === 0) {
+    console.warn('Xotelo returned no hotels for matching');
+    return [];
+  }
+
+  // Helper to find best match by simple name inclusion
+  const findMatch = (gptName: string) => {
+    const lower = gptName.toLowerCase();
+    return xoteloList.find((h: any) => {
+      const xn = (h.name || '').toLowerCase();
+      return xn.includes(lower) || lower.includes(xn);
+    });
+  };
+
+  const merged: Hotel[] = [];
+  for (const gptHotel of gptHotels.slice(0, gptLimit)) {
+    const match = findMatch(gptHotel.name);
+    if (!match) continue; // skip if no Xotelo data
+
+    merged.push({
+      name: gptHotel.name,
+      address: match.street_address || match.place_name || gptHotel.address || '',
+      rating: match.review_summary?.rating ? `${match.review_summary.rating}-star` : undefined,
+      priceRange: match.price_ranges ? `$${match.price_ranges.minimum}-$${match.price_ranges.maximum}` : undefined,
+      haiku: gptHotel.haiku,
+      image: match.image || undefined
+    });
+  }
+
+  return merged;
 }
