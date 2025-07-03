@@ -27,6 +27,7 @@ export interface Hotel {
   rating?: string;
   priceRange?: string;
   haiku: string; // A creative haiku explaining why this hotel was recommended
+  rankingPercentage?: number; // How well the hotel matches user preferences
   image?: string; // Hotel image URL
 }
 

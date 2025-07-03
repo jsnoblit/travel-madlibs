@@ -135,15 +135,7 @@ export default function DestinationDetailsModal({ destination, onClose, isOpen }
                   <Building2 className="w-5 h-5" />
                   Recommended Hotels
                 </h3>
-                {!loadingHotels && (
-                  <button
-                    onClick={loadHotels}
-                    className="text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    <span className="text-sm">Refresh</span>
-                  </button>
-                )}
+                {/* Refresh button removed per UX update */}
               </div>
 
               {loadingHotels ? (
@@ -167,34 +159,39 @@ export default function DestinationDetailsModal({ destination, onClose, isOpen }
                   {hotels.map((hotel, index) => (
                     <div
                       key={index}
-                      className="bg-gray-50 p-4 rounded-lg hover:bg-gray-100 transition-colors"
+                      className="bg-gray-50 p-4 rounded-lg hover:bg-gray-100 transition-colors flex gap-4"
                     >
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h4 className="font-medium text-gray-900">{hotel.name}</h4>
-                          <p className="text-gray-600 text-sm mt-1">{hotel.address}</p>
+                      {hotel.image && (
+                        <img
+                          src={hotel.image}
+                          alt={hotel.name}
+                          className="w-60 h-40 object-cover rounded-lg flex-shrink-0"
+                        />
+                      )}
+                      <div className="flex-1 flex flex-col">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                              {hotel.name}
+                              {hotel.rankingPercentage && (
+                                <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+                                  {hotel.rankingPercentage}%
+                                </span>
+                              )}
+                            </h4>
+                            <p className="text-gray-600 text-sm mt-1">{hotel.address}</p>
+                          </div>
+                          <div className="text-right">
+                            {hotel.rating && (
+                              <p className="text-sm font-medium text-gray-900">{hotel.rating}</p>
+                            )}
+                            {hotel.priceRange && (
+                              <p className="text-sm text-gray-600 mt-1">{hotel.priceRange}</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-right">
-                          {hotel.rating && (
-                            <p className="text-sm font-medium text-gray-900">{hotel.rating}</p>
-                          )}
-                          {hotel.priceRange && (
-                            <p className="text-sm text-gray-600 mt-1">{hotel.priceRange}</p>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Image + Haiku */}
-                      <div className="mt-3 flex gap-4 items-start">
-                        {hotel.image && (
-                          <img
-                            src={hotel.image}
-                            alt={hotel.name}
-                            className="w-32 h-24 object-cover rounded-lg flex-shrink-0"
-                          />
-                        )}
-                        <div className="p-3 bg-indigo-50 rounded-lg flex-1">
-                          <p className="text-indigo-700 italic whitespace-pre-line font-medium text-center md:text-left">
+                        <div className="mt-3 p-3 bg-indigo-50 rounded-lg">
+                          <p className="text-indigo-700 italic whitespace-pre-line font-medium">
                             {hotel.haiku.split('\n').join('\n')}
                           </p>
                         </div>

@@ -229,39 +229,36 @@ export async function fetchRealHotels(destination: string, limit: number = 3): P
       return [];
     }
 
-    // 2. Fetch hotel list
-    const listUrl = `${XOTELO_BASE_URL}/list?location_key=${locationKey}&limit=${limit}`;
-    const listRes = await fetch(listUrl, { headers });
-    const listJson = await listRes.json();
-    const hotelsRaw = listJson?.result?.list ?? [];
+    /**
+     * 2. Fetch hotel list – paginate until we have `limit` entries or run out.
+     *    Xotelo caps `limit` per call at 100, so we loop with offset.
+     */
+    const hotelsRaw: any[] = [];
+    const pageSize = Math.min(100, limit);
+    let offset = 0;
+    let totalAvailable = Infinity; // updated after first page
 
-    // 3. Map to Hotel interface
-    const hotels: Hotel[] = hotelsRaw.map((h: any) => ({
+    while (hotelsRaw.length < limit && offset < totalAvailable) {
+      const listUrl = `${XOTELO_BASE_URL}/list?location_key=${locationKey}&limit=${pageSize}&offset=${offset}&sort=popularity`;
+      const listRes = await fetch(listUrl, { headers });
+      const listJson = await listRes.json();
+      totalAvailable = listJson?.result?.total_count ?? hotelsRaw.length;
+      const page: any[] = listJson?.result?.list ?? [];
+      hotelsRaw.push(...page);
+      offset += pageSize;
+    }
+
+    // 3. Map to Hotel interface (trim to requested limit)
+    const hotels: Hotel[] = hotelsRaw.slice(0, limit).map((h: any) => ({
       name: h.name,
       address: h.street_address || h.place_name || '',
       rating: h.review_summary?.rating ? `${h.review_summary.rating}-star` : undefined,
       priceRange: h.price_ranges ? `$${h.price_ranges.minimum}-$${h.price_ranges.maximum}` : undefined,
-      haiku: '' // will be filled below
+      haiku: '',
+      image: h.image || undefined
     }));
 
-    // 4. Add haiku descriptions via OpenAI (best-effort, no-fail)
-    for (const hotel of hotels) {
-      try {
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: 'Write a 3-line haiku about the hotel.' },
-            { role: 'user', content: `Hotel: ${hotel.name}. Address: ${hotel.address}` }
-          ],
-          temperature: 0.7
-        });
-        hotel.haiku = completion.choices[0]?.message?.content?.trim() || '';
-      } catch (haikuErr) {
-        console.warn('Failed to generate haiku for hotel', hotel.name, haikuErr);
-        hotel.haiku = '';
-      }
-    }
-
+    // Skip generating individual haikus here to avoid N GPT calls.
     return hotels;
   } catch (err) {
     console.error('Error fetching real hotels:', err);
@@ -269,85 +266,84 @@ export async function fetchRealHotels(destination: string, limit: number = 3): P
   }
 }
 
-/**
- * Fetch hotels recommended by OpenAI, then augment with Xotelo factual data.
- * Any GPT-suggested hotel that cannot be matched to a Xotelo listing is skipped.
- */
-export async function fetchHybridHotels(destination: string, region: string, gptLimit: number = 5): Promise<Hotel[]> {
-  // Step 1: Get GPT hotel suggestions (names + haiku)
-  let gptHotels: Hotel[] = [];
+// -----------------------------------------------------------------------------
+// Helper: Ask OpenAI to pick the most relevant hotels and (optionally) add haiku
+// -----------------------------------------------------------------------------
+async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: number = 10): Promise<Hotel[]> {
+  if (!OPENAI_API_KEY || hotels.length <= topN) {
+    return hotels.slice(0, topN);
+  }
+
+  // Send a trimmed list to control token cost
+  const promptHotels = hotels.slice(0, 50).map(h => ({
+    name: h.name,
+    rating: h.rating,
+    priceRange: h.priceRange
+  }));
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    store: true,
+    messages: [
+      {
+        role: 'system',
+        content: `You are a hotel-ranking API. Select the most relevant hotels (max ${topN}) for the traveller and return ONLY valid JSON with this exact shape (no extra keys or text):\n{\n  "hotels": [\n    {\n      "name": "Hotel name from list",\n      "rankingPercentage": 70-100,\n      "haiku": "Three-line haiku about the hotel"\n    }\n  ]\n}\n\nRules:\n• The \"name\" must match one of the provided hotels exactly.\n• Use distinct rankingPercentage values between 70-100 (higher = better).\n• Do not output more than ${topN} hotels.\n• Respond with JSON only – no markdown, no prose.`
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          destination: destinationLabel,
+          hotels: promptHotels
+        })
+      }
+    ],
+    temperature: 0.3,
+    response_format: { type: 'json_object' }
+  });
+
+  let picked: any[] = [];
   try {
-    gptHotels = await fetchHotelRecommendations(destination, region);
-  } catch (err) {
-    console.error('GPT hotel recommendation failed', err);
-    return [];
-  }
-  if (gptHotels.length === 0) return [];
-
-  // Step 2: Pull Xotelo list for the destination
-  if (!XOTELO_API_KEY || !XOTELO_API_HOST || !XOTELO_BASE_URL) {
-    console.warn('Xotelo credentials missing – returning GPT-only hotels without factual data');
-    return [];
+    const rawText = completion.choices[0]?.message?.content?.trim();
+    if (rawText) {
+      const raw = JSON.parse(rawText);
+      picked = raw.hotels || [];
+    }
+  } catch (e) {
+    console.warn('Failed to parse hotel ranking response, falling back to first entries');
   }
 
-  const headers = {
-    'X-RapidAPI-Key': XOTELO_API_KEY,
-    'X-RapidAPI-Host': XOTELO_API_HOST
-  } as Record<string, string>;
+  const metaMap = Object.fromEntries(picked.map((h: any) => [h.name.toLowerCase(), h]));
+  const rankedNames = picked.map(h => h.name.toLowerCase());
 
-  // Get location_key
-  let locationKey: string | undefined;
-  try {
-    const searchUrl = `${XOTELO_BASE_URL}/search?query=${encodeURIComponent(destination)}&location_type=geo`;
-    const locRes = await fetch(searchUrl, { headers });
-    const locJson = await locRes.json();
-    locationKey = locJson?.result?.list?.[0]?.location_key;
-  } catch (err) {
-    console.error('Xotelo location search failed', err);
-  }
-  if (!locationKey) {
-    console.warn('No Xotelo location_key found; cannot augment GPT hotels');
-    return [];
+  const ranked: Hotel[] = [];
+  for (const nameLower of rankedNames) {
+    const match = hotels.find(h => h.name.toLowerCase() === nameLower);
+    if (match && !ranked.includes(match)) {
+      const meta = metaMap[nameLower] as any;
+      if (meta?.haiku) match.haiku = meta.haiku;
+      if (meta?.rankingPercentage) match.rankingPercentage = meta.rankingPercentage;
+      ranked.push(match);
+    }
+    if (ranked.length === topN) break;
   }
 
-  // Fetch Xotelo hotel list (higher limit for matching)
-  let xoteloList: any[] = [];
-  try {
-    const listUrl = `${XOTELO_BASE_URL}/list?location_key=${locationKey}&limit=50`;
-    const listRes = await fetch(listUrl, { headers });
-    const listJson = await listRes.json();
-    xoteloList = listJson?.result?.list ?? [];
-  } catch (err) {
-    console.error('Xotelo list fetch failed', err);
-  }
-  if (xoteloList.length === 0) {
-    console.warn('Xotelo returned no hotels for matching');
-    return [];
+  // Fallback to fill any remaining slots
+  for (const hotel of hotels) {
+    if (ranked.length === topN) break;
+    if (!ranked.includes(hotel)) ranked.push(hotel);
   }
 
-  // Helper to find best match by simple name inclusion
-  const findMatch = (gptName: string) => {
-    const lower = gptName.toLowerCase();
-    return xoteloList.find((h: any) => {
-      const xn = (h.name || '').toLowerCase();
-      return xn.includes(lower) || lower.includes(xn);
-    });
-  };
+  return ranked;
+}
 
-  const merged: Hotel[] = [];
-  for (const gptHotel of gptHotels.slice(0, gptLimit)) {
-    const match = findMatch(gptHotel.name);
-    if (!match) continue; // skip if no Xotelo data
+// -----------------------------------------------------------------------------
+// Enhanced Hybrid fetch – pulls larger factual pool & GPT-ranks the results
+// -----------------------------------------------------------------------------
+export async function fetchHybridHotels(destination: string, region: string, gptLimit: number = 10): Promise<Hotel[]> {
+  // 1. Retrieve a broad factual pool (up to 100) from Xotelo
+  const factual = await fetchRealHotels(destination, 100);
+  if (factual.length === 0) return [];
 
-    merged.push({
-      name: gptHotel.name,
-      address: match.street_address || match.place_name || gptHotel.address || '',
-      rating: match.review_summary?.rating ? `${match.review_summary.rating}-star` : undefined,
-      priceRange: match.price_ranges ? `$${match.price_ranges.minimum}-$${match.price_ranges.maximum}` : undefined,
-      haiku: gptHotel.haiku,
-      image: match.image || undefined
-    });
-  }
-
-  return merged;
+  // 2. Rank factual pool & generate haiku in a SINGLE OpenAI call
+  return await rankHotels(`${destination}, ${region}`, factual, gptLimit);
 }
