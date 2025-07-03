@@ -78,7 +78,8 @@ Response format:
         }
       ],
       temperature: 0.7,
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" },
+      max_tokens: 2000
     });
 
     if (!completion.choices[0]?.message?.content) {
@@ -270,8 +271,9 @@ export async function fetchRealHotels(destination: string, limit: number = 3): P
 // Helper: Ask OpenAI to pick the most relevant hotels and (optionally) add haiku
 // -----------------------------------------------------------------------------
 async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: number = 10): Promise<Hotel[]> {
-  if (!OPENAI_API_KEY || hotels.length <= topN) {
-    return hotels.slice(0, topN);
+  if (!OPENAI_API_KEY) {
+    const withHaiku = hotels.filter(h => h.haiku && h.haiku.trim().length > 0);
+    return withHaiku.slice(0, topN);
   }
 
   // Send a trimmed list to control token cost
@@ -333,7 +335,10 @@ async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: numbe
     if (!ranked.includes(hotel)) ranked.push(hotel);
   }
 
-  return ranked;
+  // Filter to include only hotels that have a haiku. If fewer than "topN" meet this criterion,
+  // returning fewer results is acceptable per UX requirements.
+  const withHaiku = ranked.filter(h => h.haiku && h.haiku.trim().length > 0);
+  return withHaiku.slice(0, topN);
 }
 
 // -----------------------------------------------------------------------------
@@ -346,4 +351,21 @@ export async function fetchHybridHotels(destination: string, region: string, gpt
 
   // 2. Rank factual pool & generate haiku in a SINGLE OpenAI call
   return await rankHotels(`${destination}, ${region}`, factual, gptLimit);
+}
+
+// -----------------------------------------------------------------------------
+// Warm OpenAI connection – lightweight ping to reduce first-call latency
+// -----------------------------------------------------------------------------
+export async function warmOpenAIConnection(): Promise<void> {
+  if (!OPENAI_API_KEY) return;
+  try {
+    await openai.chat.completions.create({
+      model: "gpt-3.5-turbo-0125",
+      messages: [{ role: "system", content: "ping" }],
+      max_tokens: 1,
+      temperature: 0
+    });
+  } catch (err) {
+    console.warn('OpenAI warm-up ping failed:', err);
+  }
 }

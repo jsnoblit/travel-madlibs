@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Compass } from 'lucide-react';
 import MadLibForm from './components/MadLibForm';
 import DestinationCard from './components/DestinationCard';
 import DestinationDetailsModal from './components/DestinationDetailsModal';
 import TravelProfileButton from './components/TravelProfileButton';
-import { generateTravelRecommendations } from './services/api';
+import { generateTravelRecommendations, warmOpenAIConnection } from './services/api';
 import { TravelQuery, Destination } from './types';
 
 function App() {
@@ -51,6 +51,14 @@ function App() {
     setError(null);
     setSelectedDestination(null);
   };
+
+  // Warm OpenAI connection once per browser session
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !sessionStorage.getItem('openaiWarmed')) {
+      warmOpenAIConnection();
+      sessionStorage.setItem('openaiWarmed', 'true');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">

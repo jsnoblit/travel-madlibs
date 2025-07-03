@@ -23,7 +23,7 @@ export default function MadLibForm({ onSubmit }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="max-w-full mx-auto text-lg">
-      <p className="leading-relaxed">
+      <div className="leading-relaxed">
         I want{' '}
         <Typeahead
           value={query.tripIdea}
@@ -54,8 +54,8 @@ export default function MadLibForm({ onSubmit }: Props) {
                      outline-none transition-all duration-300 rounded-md focus:ring-2 focus:ring-purple-200"
           pillClassName="bg-purple-100 text-purple-800 hover:bg-purple-200"
         />
-      </p>
-      <p className="leading-relaxed mt-4">
+      </div>
+      <div className="leading-relaxed mt-4">
         Coming from{' '}
         <Typeahead
           value={query.comingFrom}
@@ -66,7 +66,7 @@ export default function MadLibForm({ onSubmit }: Props) {
                      outline-none transition-all duration-300 rounded-md focus:ring-2 focus:ring-amber-200"
           pillClassName="bg-amber-100 text-amber-800 hover:bg-amber-200"
         />
-      </p>
+      </div>
       <button
         type="submit"
         className="mt-8 px-6 py-3 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 
