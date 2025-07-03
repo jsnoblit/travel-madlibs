@@ -15,6 +15,7 @@ function App() {
   const [hasSearched, setHasSearched] = useState(false);
   const [travelProfile, setTravelProfile] = useState<string>('');
   const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
+  const [lastQuery, setLastQuery] = useState<TravelQuery | null>(null);
 
   const handleSubmit = async (query: TravelQuery) => {
     if (!query.tripIdea || !query.travelCompanion || !query.location || !query.comingFrom) {
@@ -24,6 +25,7 @@ function App() {
 
     setLoading(true);
     setError(null);
+    setLastQuery(query);
     
     try {
       const response = await generateTravelRecommendations({
@@ -140,6 +142,7 @@ function App() {
 
       <DestinationDetailsModal
         destination={selectedDestination!}
+        tripIdea={lastQuery?.tripIdea || ''}
         isOpen={selectedDestination !== null}
         onClose={() => setSelectedDestination(null)}
       />

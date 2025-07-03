@@ -29,46 +29,33 @@ export async function generateTravelRecommendations(query: TravelQuery): Promise
       messages: [
         {
           role: "system",
-          content: `You are a travel expert API that generates personalized destination recommendations. You MUST respond in valid JSON format only, with no additional text.
+          content: `You are a travel-recommendation engine.
 
-Your task is to suggest up to 10 distinct travel destinations based on the query parameters – don't show anything under 70%. For each destination:
-- Ensure it's a realistic match for the user's preferences
-- Provide accurate transportation information from their origin location
-- Assign match percentages between 0-100, with distinct values for each destination
-- Include practical highlights that match the destination type
-- Specify the most favorable time period to visit considering weather, crowds, and seasonal activities
-
-Response requirements:
-- Every field must be filled with appropriate content
-- No null or missing values
-- Varied destination types (not all the same category)
-- Match percentages should reflect how well each destination aligns with the request
-- Each destination must be in a distinct region or country
-- Description should be 2-3 sentences highlighting unique features
-- Best time to visit should include specific months and brief reasoning
-- Include specific, actionable highlights (3-5 per destination)
-- Provide realistic travel durations based on actual distances
-- Include a concise summary (max 225 chars) explaining the destination selection logic, budget considerations, and visa requirements and travel restrictions for international destinations
-
-Response format:
+Reply ONLY with valid JSON exactly matching this schema:
 {
-  "summary": "Brief explanation of why these destinations were selected",
+  "summary": string (<=225 chars),
   "destinations": [
     {
-      "name": "Destination Name",
-      "region": "Country or Region",
-      "description": "2-3 sentence description",
-      "bestTimeToVisit": "Month range with brief reason",
-      "highlights": ["Highlight 1", "Highlight 2", "Highlight 3"],
-      "matchPercentage": number between 80-100,
+      "name": string,
+      "region": string,
+      "description": string (~2 sentences),
+      "bestTimeToVisit": string (months + reason),
+      "highlights": string[3-5],
+      "matchPercentage": 70-100,
       "transportation": {
-        "method": "Transportation type",
-        "duration": "Travel time",
-        "description": "Brief travel instructions"
+        "method": string,
+        "duration": string,
+        "description": string
       }
     }
   ]
-}`
+}
+
+Rules:
+• Suggest up to 10 distinct CITIES (no hotels) that fit the traveller's query; skip anything below 70 % and use unique matchPercentage values.
+• Use varied destination types & countries.
+• Fill EVERY field (no nulls) and base transportation on the traveller's origin.
+• Respond with JSON only – no markdown, extra keys, or prose.`
         },
         {
           role: "user",
@@ -270,7 +257,7 @@ export async function fetchRealHotels(destination: string, limit: number = 3): P
 // -----------------------------------------------------------------------------
 // Helper: Ask OpenAI to pick the most relevant hotels and (optionally) add haiku
 // -----------------------------------------------------------------------------
-async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: number = 10): Promise<Hotel[]> {
+async function rankHotels(destinationLabel: string, hotels: Hotel[], tripIdea: string | undefined, topN: number = 10): Promise<Hotel[]> {
   if (!OPENAI_API_KEY) {
     const withHaiku = hotels.filter(h => h.haiku && h.haiku.trim().length > 0);
     return withHaiku.slice(0, topN);
@@ -289,7 +276,7 @@ async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: numbe
     messages: [
       {
         role: 'system',
-        content: `You are a hotel-ranking API. Select the most relevant hotels (max ${topN}) for the traveller and return ONLY valid JSON with this exact shape (no extra keys or text):\n{\n  "hotels": [\n    {\n      "name": "Hotel name from list",\n      "rankingPercentage": 70-100,\n      "haiku": "Three-line haiku about the hotel"\n    }\n  ]\n}\n\nRules:\n• The \"name\" must match one of the provided hotels exactly.\n• Use distinct rankingPercentage values between 70-100 (higher = better).\n• Do not output more than ${topN} hotels.\n• Respond with JSON only – no markdown, no prose.`
+        content: `You are a hotel-ranking API. The traveller wants to ${tripIdea || 'make the most of their trip'}. Select the most relevant hotels (max ${topN}) for the traveller and return ONLY valid JSON with this exact shape (no extra keys or text):\n{\n  "hotels": [\n    {\n      "name": "Hotel name from list",\n      "rankingPercentage": 70-100,\n      "haiku": "Three-line haiku about the hotel"\n    }\n  ]\n}\n\nRules:\n• The \"name\" must match one of the provided hotels exactly.\n• Use distinct rankingPercentage values between 70-100 (higher = better).\n• Do not output more than ${topN} hotels.\n• Respond with JSON only – no markdown, no prose.`
       },
       {
         role: 'user',
@@ -344,13 +331,13 @@ async function rankHotels(destinationLabel: string, hotels: Hotel[], topN: numbe
 // -----------------------------------------------------------------------------
 // Enhanced Hybrid fetch – pulls larger factual pool & GPT-ranks the results
 // -----------------------------------------------------------------------------
-export async function fetchHybridHotels(destination: string, region: string, gptLimit: number = 10): Promise<Hotel[]> {
+export async function fetchHybridHotels(destination: string, region: string, tripIdea: string | undefined, gptLimit: number = 10): Promise<Hotel[]> {
   // 1. Retrieve a broad factual pool (up to 100) from Xotelo
   const factual = await fetchRealHotels(destination, 100);
   if (factual.length === 0) return [];
 
   // 2. Rank factual pool & generate haiku in a SINGLE OpenAI call
-  return await rankHotels(`${destination}, ${region}`, factual, gptLimit);
+  return await rankHotels(`${destination}, ${region}`, factual, tripIdea, gptLimit);
 }
 
 // -----------------------------------------------------------------------------

@@ -5,11 +5,12 @@ import { fetchHybridHotels } from '../services/api';
 
 interface Props {
   destination: Destination;
+  tripIdea: string;
   onClose: () => void;
   isOpen: boolean;
 }
 
-export default function DestinationDetailsModal({ destination, onClose, isOpen }: Props) {
+export default function DestinationDetailsModal({ destination, tripIdea, onClose, isOpen }: Props) {
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [loadingHotels, setLoadingHotels] = useState(false);
   const [hotelError, setHotelError] = useState<string | null>(null);
@@ -24,7 +25,7 @@ export default function DestinationDetailsModal({ destination, onClose, isOpen }
     setLoadingHotels(true);
     setHotelError(null);
     try {
-      const recommendations = await fetchHybridHotels(destination.name, destination.region);
+      const recommendations = await fetchHybridHotels(destination.name, destination.region, tripIdea);
       setHotels(recommendations);
     } catch (error) {
       setHotelError('Unable to load hotel recommendations');
